@@ -12,7 +12,12 @@ from .to_iterable import to_iterable
 from .to_stage import to_stage
 
 
-def run(*stages: tp.Union[Stage[A], tp.Iterable[A]], maxsize: int = 0) -> None:
+def run(
+    *stages: tp.Union[Stage[A], tp.Iterable[A]],
+    maxsize: int = 0,
+    use_ipc: tp.Optional[bool] = None,
+    ipc=None,
+) -> None:
     """
     Iterates over one or more stages until their iterators run out of elements.
 
@@ -29,15 +34,18 @@ def run(*stages: tp.Union[Stage[A], tp.Iterable[A]], maxsize: int = 0) -> None:
     Arguments:
         stages: A stage/iterable or list of stages/iterables to be iterated over. If a list is passed, stages are first merged using `concat` before iterating.
         maxsize: The maximum number of objects the stage can hold simultaneously, if set to `0` (default) then the stage can grow unbounded.
+        use_ipc: Override the Arrow IPC setting of the stages. `None` (default) inherits it, `True` enables it, `False` disables it.
+        ipc: An explicit `ArrowIPCTransport` or `ArrowIPCStore` used for this call. Takes precedence over `use_ipc`.
 
     """
 
     if len(stages) == 0:
         return
     elif len(stages) == 1:
-        stage = to_iterable(stages[0], maxsize=maxsize)
+        stage = to_iterable(stages[0], maxsize=maxsize, use_ipc=use_ipc, ipc=ipc)
     else:
-        stage = concat(list(stages), maxsize=maxsize)
+        stage = concat(list(stages), maxsize=maxsize, use_ipc=use_ipc is True, ipc=ipc)
+        stage = to_iterable(stage, maxsize=maxsize)
 
     for _ in stage:
         pass

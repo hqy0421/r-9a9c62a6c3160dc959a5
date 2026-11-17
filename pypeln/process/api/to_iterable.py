@@ -11,6 +11,8 @@ def to_iterable(
     stage: tp.Union[Stage[A], tp.Iterable[A]],
     maxsize: int = 0,
     return_index: bool = False,
+    use_ipc: tp.Optional[bool] = None,
+    ipc=None,
 ) -> tp.Iterable[A]:
     ...
 
@@ -19,6 +21,8 @@ def to_iterable(
 def to_iterable(
     maxsize: int = 0,
     return_index: bool = False,
+    use_ipc: tp.Optional[bool] = None,
+    ipc=None,
 ) -> pypeln_utils.Partial[tp.Iterable[A]]:
     ...
 
@@ -29,6 +33,8 @@ def to_iterable(
     ] = pypeln_utils.UNDEFINED,
     maxsize: int = 0,
     return_index: bool = False,
+    use_ipc: tp.Optional[bool] = None,
+    ipc=None,
 ) -> tp.Union[tp.Iterable[A], pypeln_utils.Partial[tp.Iterable[A]]]:
     """
     Creates an iterable from a stage. Use this function to when you want to have more control over how the output stage is consumed, especifically, setting the `maxsize` argument can help you avoid OOM error if the consumer is slow.
@@ -37,16 +43,31 @@ def to_iterable(
         stage: A Stage or Iterable.
         maxsize: The maximum number of objects the output queue can hold simultaneously, if set to `0` (default) then the stage can grow unbounded.
         return_index: When set to `True` the resulting iterable will yield the `Elemen(index: Tuple[int, ...], value: Any)` which contains both the resulting value and the index parameter which holds information about the order of creation of the elements at the source.
+        use_ipc: Override the Arrow IPC setting of the stage for this terminal call. `None` (default) inherits it, `True` enables it, `False` disables it.
+        ipc: An explicit `ArrowIPCTransport` or `ArrowIPCStore` used for this terminal call. Takes precedence over `use_ipc`.
 
     Returns:
         If the `stage` parameters is given then this function returns an iterable, else it returns a `Partial`.
     """
 
     if isinstance(stage, pypeln_utils.Undefined):
-        return pypeln_utils.Partial(lambda stage: to_iterable(stage, maxsize=maxsize))
+        return pypeln_utils.Partial(
+            lambda stage: to_iterable(
+                stage,
+                maxsize=maxsize,
+                return_index=return_index,
+                use_ipc=use_ipc,
+                ipc=ipc,
+            )
+        )
 
     if isinstance(stage, Stage):
-        iterable = stage.to_iterable(maxsize=maxsize, return_index=return_index)
+        iterable = stage.to_iterable(
+            maxsize=maxsize,
+            return_index=return_index,
+            use_ipc=use_ipc,
+            ipc=ipc,
+        )
     else:
         iterable = stage
 

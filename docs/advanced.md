@@ -84,6 +84,55 @@ General guidelines:
 * Communication between `processes` is costly since python objects have to be serialized, which has a considerable overhead when passing large objects such as `numpy` arrays, binary objects, etc. To avoid this overhead try only passing metadata information such as filepaths between processes.
 * There is no overhead in communication between `threads` or `tasks`, since everything happens in-memory there is no serialization overhead.
 
+### Arrow IPC file transport (process module)
+
+When `pyarrow.RecordBatch` objects flow through `pl.process`, the whole batch body is serialized with `pickle` on every stage boundary and for every consumer of a fan-out, which is expensive for large batches. The process module offers an **optional** Arrow IPC transport that writes each batch body to a temporary [Arrow IPC file](https://arrow.apache.org/docs/format/Columnar.html#ipc-file-format) and only puts a small descriptor on the queue. Queues decode descriptors back into real `RecordBatch` objects, so `map` / `filter` / `flat_map` callbacks and the terminal consumer never notice the difference.
+
+The feature is off by default and requires `pyarrow` (`pip install pypeln[ipc]` or `pip install pyarrow`). Any value that is not a `RecordBatch` (bare or wrapped in an `Element`) takes the regular pickle path.
+
+Enable it per stage, per call, or for a whole scope:
+
+```python
+import pypeln as pl
+
+# per stage: every queue of this pipeline uses the transport
+stage = pl.process.map(f, batches, workers=3, use_ipc=True)
+result = list(stage)  # result holds real RecordBatch objects
+
+# per terminal call
+stage = pl.process.map(f, batches)
+result = list(pl.process.to_iterable(stage, use_ipc=True))
+
+# explicit transport (cleaned up when you close it, or use it as a context manager)
+transport = pl.process.ArrowIPCTransport(root="/tmp/my-ipc")
+stage = pl.process.map(f, batches, ipc=transport)
+result = list(stage)
+transport.close()
+
+# ambient configuration
+with pl.process.arrow_ipc() as transport:
+    stage = pl.process.map(f, batches)
+    result = list(stage)
+
+# process-wide
+pl.process.enable_ipc()
+...
+pl.process.close_ipc()
+```
+
+The same three levels also accept an explicit transport object or `ArrowIPCStore` through the `ipc=` argument, which takes precedence over `use_ipc=`. The environment variables `PYPELN_IPC=1` and `PYPELN_IPC_DIR=/some/dir` enable it globally without code changes.
+
+Guarantees:
+
+* **Fidelity** — schema, schema/field metadata, column order, values, nulls, zero-row and zero-column batches are preserved exactly.
+* **Ordering** — the original `Element` index is untouched, so `ordered` and `return_index=True` behave as before.
+* **Write-before-publish** — a file is fully written and atomically moved into place before its descriptor is queued; a failure during writing publishes nothing and raises.
+* **No premature deletion** — an execution's files are private to that execution, and a fan-out shares one file. Nothing is removed while an execution is still live.
+* **Cleanup** — the execution's directory is removed on normal completion, on error, and when the output generator is closed; an explicitly passed transport can also be closed with `transport.close()`. Batches already returned to your code are buffered in memory and remain readable afterwards.
+* **Object storage** — `pl.process.FileSystemArrowIPCStore("s3://bucket/prefix")` (or any URI understood by `pyarrow.fs.FileSystem.from_uri`) stores the files remotely instead of on the local disk.
+
+`pl.process.is_available()` reports whether `pyarrow` is installed. Requesting the transport without it raises `pl.process.IPCDependencyError`, while every non-IPC pipeline keeps working unchanged.
+
 ## Resource Management
 
 There are many occasions where you need to create some resource objects (e.g. http or database sessions) that (for efficiency) are expected to last the whole span of each worker's life. To support and effectily manage the lifecycle of such objects most of `pypeln`s functions accept the `on_start` and `on_done` callbacks.

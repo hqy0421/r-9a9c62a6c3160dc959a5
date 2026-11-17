@@ -17,6 +17,7 @@ nav:
           filter: api/process/filter.md
           flat_map: api/process/flat_map.md
           from_iterable: api/process/from_iterable.md
+          ipc: api/process/ipc.md
           map: api/process/map.md
           ordered: api/process/ordered.md
           run: api/process/run.md

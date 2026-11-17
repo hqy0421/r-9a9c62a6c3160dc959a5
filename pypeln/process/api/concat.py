@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pypeln import utils as pypeln_utils
 from pypeln.utils import A, B, T
 
+from ..ipc import setting_from_args
 from ..stage import Stage
 from ..worker import ApplyProcess, ProcessFn, Worker
 from .to_stage import to_stage
@@ -17,7 +18,10 @@ class Concat(ApplyProcess):
 
 
 def concat(
-    stages: tp.List[tp.Union[Stage[A], tp.Iterable[A]]], maxsize: int = 0
+    stages: tp.List[tp.Union[Stage[A], tp.Iterable[A]]],
+    maxsize: int = 0,
+    use_ipc: bool = False,
+    ipc=None,
 ) -> Stage:
     """
     Concatenates / merges many stages into a single one by appending elements from each stage as they come, order is not preserved.
@@ -34,12 +38,15 @@ def concat(
     Arguments:
         stages: A list of Stage or Iterable.
         maxsize: The maximum number of objects the stage can hold simultaneously, if set to `0` (default) then the stage can grow unbounded.
+        use_ipc: If `True`, `RecordBatch` values of this pipeline travel through the queues as Arrow IPC files instead of pickled batch bodies. Requires `pyarrow`, see [Advanced Usage](https://cgarciae.github.io/pypeln/advanced/#arrow-ipc-file-transport-process-module).
+        ipc: An explicit `ArrowIPCTransport` or `ArrowIPCStore` used for this stage. Takes precedence over `use_ipc`.
 
     Returns:
         A stage object.
     """
 
-    dependencies = [to_stage(stage, maxsize=maxsize) for stage in stages]
+    setting = setting_from_args(use_ipc, ipc)
+    dependencies = [to_stage(stage, maxsize=maxsize, ipc=setting) for stage in stages]
 
     return Stage(
         process_fn=Concat(),
@@ -52,4 +59,5 @@ def concat(
         on_done=None,
         use_threads=False,
         f_args=[],
+        ipc=setting,
     )

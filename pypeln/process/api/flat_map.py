@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pypeln import utils as pypeln_utils
 from pypeln.utils import A, B, T
 
+from ..ipc import setting_from_args
 from ..stage import Stage
 from ..worker import ApplyProcess, ProcessFn, Worker
 from .to_stage import to_stage
@@ -37,6 +38,8 @@ def flat_map(
     timeout: float = 0,
     on_start: tp.Callable = None,
     on_done: tp.Callable = None,
+    use_ipc: bool = False,
+    ipc=None,
 ) -> Stage[B]:
     ...
 
@@ -49,6 +52,8 @@ def flat_map(
     timeout: float = 0,
     on_start: tp.Callable = None,
     on_done: tp.Callable = None,
+    use_ipc: bool = False,
+    ipc=None,
 ) -> pypeln_utils.Partial[Stage[B]]:
     ...
 
@@ -63,6 +68,8 @@ def flat_map(
     timeout: float = 0,
     on_start: tp.Callable = None,
     on_done: tp.Callable = None,
+    use_ipc: bool = False,
+    ipc=None,
 ) -> tp.Union[Stage[B], pypeln_utils.Partial[Stage[B]]]:
     """
     Creates a stage that maps a function `f` over the data, however unlike `pypeln.process.map` in this case `f` returns an iterable. As its name implies, `flat_map` will flatten out these iterables so the resulting stage just contains their elements.
@@ -109,6 +116,8 @@ def flat_map(
         timeout: Seconds before stoping the worker if its current task is not yet completed. Defaults to `0` which means its unbounded.
         on_start: A function with signature `on_start(worker_info?) -> kwargs?`, where `kwargs` can be a `dict` of keyword arguments that can be consumed by `f` and `on_done`. `on_start` can accept additional arguments by name as described in [Advanced Usage](https://cgarciae.github.io/pypeln/advanced/#dependency-injection).
         on_done: A function with signature `on_done(stage_status?)`. This function is executed once per worker when the worker finishes. `on_done` can accept additional arguments by name as described in [Advanced Usage](https://cgarciae.github.io/pypeln/advanced/#dependency-injection).
+        use_ipc: If `True`, `RecordBatch` values of this pipeline travel through the queues as Arrow IPC files instead of pickled batch bodies. Requires `pyarrow`, see [Advanced Usage](https://cgarciae.github.io/pypeln/advanced/#arrow-ipc-file-transport-process-module).
+        ipc: An explicit `ArrowIPCTransport` or `ArrowIPCStore` used for this stage. Takes precedence over `use_ipc`.
 
     Returns:
         Returns a `Stage` if the `stage` parameters is given, else it returns a `Partial`.
@@ -124,10 +133,12 @@ def flat_map(
                 timeout=timeout,
                 on_start=on_start,
                 on_done=on_done,
+                use_ipc=use_ipc,
+                ipc=ipc,
             )
         )
 
-    stage = to_stage(stage, maxsize=maxsize)
+    stage = to_stage(stage, maxsize=maxsize, ipc=setting_from_args(use_ipc, ipc))
 
     return Stage(
         process_fn=FlatMap(f),
@@ -140,4 +151,5 @@ def flat_map(
         on_done=on_done,
         use_threads=False,
         f_args=pypeln_utils.function_args(f),
+        ipc=setting_from_args(use_ipc, ipc),
     )

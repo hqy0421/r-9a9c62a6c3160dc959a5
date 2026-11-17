@@ -7,6 +7,7 @@ from multiprocessing.queues import Empty, Queue
 from pypeln import utils as pypeln_utils
 
 from . import utils
+from .ipc import BatchDescriptor
 
 T = tp.TypeVar("T")
 
@@ -15,8 +16,18 @@ PipelineException = pypeln_utils.PipelineException
 
 
 class IterableQueue(Queue, tp.Generic[T], tp.Iterable[T]):
-    def __init__(self, maxsize: int = 0, total_sources: int = 1):
+    def __init__(
+        self,
+        maxsize: int = 0,
+        total_sources: int = 1,
+        transport=None,
+    ):
         super().__init__(maxsize=maxsize, ctx=multiprocessing.get_context())
+
+        # Optional Arrow IPC execution scope (see `pypeln.process.ipc`). When
+        # set, RecordBatch values are written to files and only descriptors
+        # travel through the queue.
+        self.transport = transport
 
         self.namespace = utils.Namespace(
             remaining=total_sources, exception=False, force_stop=False
@@ -24,6 +35,13 @@ class IterableQueue(Queue, tp.Generic[T], tp.Iterable[T]):
         self.exception_queue: Queue[PipelineException] = Queue(
             ctx=multiprocessing.get_context()
         )
+
+    def put(self, x: T, block: bool = True, timeout: tp.Optional[float] = None):
+        if self.transport is not None and not isinstance(x, pypeln_utils.Done):
+            # Write the batch file first; only then publish the descriptor.
+            x = self.transport.encode(x)
+
+        return super().put(x, block=block, timeout=timeout)
 
     def get(self, block: bool = True, timeout: tp.Optional[float] = None) -> T:
         while True:
@@ -45,12 +63,29 @@ class IterableQueue(Queue, tp.Generic[T], tp.Iterable[T]):
 
                 continue
 
+            if isinstance(x, BatchDescriptor) or (
+                isinstance(x, pypeln_utils.Element)
+                and isinstance(x.value, BatchDescriptor)
+            ):
+                # Turn the descriptor back into a real RecordBatch so worker
+                # callbacks and terminal consumers only ever see batches.
+                x = self._decode(x)
+
             return x
 
+    @staticmethod
+    def _decode(x):
+        if isinstance(x, BatchDescriptor):
+            return x.read()
+
+        return x.set(x.value.read())
+
     def clear(self):
+        # Use the raw multiprocessing getter so cleanup never reads batch
+        # files (``Queue.get_nowait`` dispatches back to our ``get``).
         try:
             while True:
-                self.get_nowait()
+                super().get(block=False)
         except Empty:
             pass
 
@@ -104,15 +139,27 @@ class IterableQueue(Queue, tp.Generic[T], tp.Iterable[T]):
         return PipelineException(exception_type, trace)
 
     def __getstate__(self):
-        return super().__getstate__() + (self.namespace, self.exception_queue)
+        return super().__getstate__() + (
+            self.namespace,
+            self.exception_queue,
+            self.transport,
+        )
 
     def __setstate__(self, state):
-        super().__setstate__(state[:-2])
-        self.namespace, self.exception_queue = state[-2:]
+        super().__setstate__(state[:-3])
+        self.namespace, self.exception_queue, self.transport = state[-3:]
 
 
 class OutputQueues(tp.List[IterableQueue[T]], tp.Generic[T]):
+    def __init__(self, iterable=(), transport=None):
+        super().__init__(iterable)
+        self.transport = transport
+
     def put(self, x: T):
+        if self.transport is not None and not isinstance(x, pypeln_utils.Done):
+            # Encode once so every fan-out consumer shares a single file.
+            x = self.transport.encode(x)
+
         for queue in self:
             queue.put(x)
 

@@ -13,6 +13,7 @@
 * [filter](filter.md)
 * [flat_map](flat_map.md)
 * [from_iterable](from_iterable.md)
+* [ipc](ipc.md) — optional Arrow IPC file transport for `RecordBatch` data
 * [map](map.md)
 * [ordered](ordered.md)
 * [run](run.md)
